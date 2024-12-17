@@ -1,0 +1,100 @@
+version: "2.2"
+
+services:
+
+  everythingcharge-frontend:
+    container_name: everythingcharge-frontend
+    restart: always
+    image: node:18.17-bullseye
+    volumes:
+      - ./frontend:/ocpp/frontend
+    ports:
+      - "${UI_SERVER_PORT}:${UI_SERVER_PORT}"
+    networks:
+      - app-network
+    command: >
+      sh -c "cd /ocpp/frontend &&
+             yarn install && 
+             yarn dev --port ${UI_SERVER_PORT} --host 0.0.0.0"
+    depends_on:
+      everythingcharge-api:
+        condition: service_healthy
+
+  everythingcharge-nginx:
+    image: nginx:1.24.0-bullseye
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+    depends_on:
+      - everythingcharge-frontend
+    networks:
+      - app-network
+
+  everythingcharge-rabbitmq:
+    image: rabbitmq:3.12.0-management
+    restart: always
+    container_name: everythingcharge-rabbitmq
+    env_file:
+      - .env
+    ports:
+      - "${RABBITMQ_PORT}:5672"
+      - "${RABBITMQ_UI_PORT}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS}"
+    healthcheck:
+      test: "exit 0"
+    networks:
+      - app-network
+
+  everythingcharge-db:
+    image: postgres:15.3-bullseye
+    restart: always
+    container_name: everythingcharge-db
+    volumes:
+      - ./db_data/postgres:/var/lib/postgres
+    env_file:
+      - .env
+    ports:
+      - "${DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: "${DB_USER}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD}"
+      POSTGRES_DB: "${DB_NAME}"
+      PGDATA: "/var/lib/postgres"
+    healthcheck:
+      test: "exit 0"
+    networks:
+      - app-network
+
+  everythingcharge-api:
+    container_name: EVapi
+    build:
+      context: .
+    volumes:
+      - ./backend:/ocpp/backend
+    ports:
+      - "${HTTP_SERVER_PORT}:${HTTP_SERVER_PORT}"
+    env_file:
+      - .env
+    networks:
+      - app-network
+    restart: always
+    command: >
+      sh -c "cd /ocpp/backend && \
+             alembic upgrade head && \
+             cd api && \
+             uvicorn main:app --host 0.0.0.0 --port ${HTTP_SERVER_PORT} --reload"
+    depends_on:
+      everythingcharge-rabbitmq:
+        condition: service_healthy
+      everythingcharge-db:
+        condition: service_healthy
+    healthcheck:
+      test: "exit 0"
+
+networks:
+  app-network:
+    driver: bridge
+
